@@ -2,8 +2,9 @@
 
 [Скачать](https://github.com/Bojoom2004/pubgCartsCV/releases/tag/v1.0.0)
 Android-приложение (Android 11+).
-[Скачать уже готовый пак карт на 01.11.26](https://drive.google.com/file/d/1s5i7lOw3TxspZM1Hmp-H140zgWzhNy_i/view?usp=drivesdk)
 Само листает карты в игре, делает скриншоты, вырезает карточки и собирает zip в `Загрузки/PUBG_cards`.
+[Скачать уже готовый пак карт на 01.11.26](https://drive.google.com/file/d/1s5i7lOw3TxspZM1Hmp-H140zgWzhNy_i/view?usp=drivesdk)
+
 
 <img width="512" height="512" alt="photo_2026-11-01_20-28-29" src="https://github.com/user-attachments/assets/3339c16a-eb6f-41d2-870c-363558d2b18f" />
 
