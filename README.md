@@ -1,7 +1,7 @@
 # PUBG Cards: сбор карточек коллекции
 
 [Скачать](https://github.com/Bojoom2004/pubgCartsCV/releases/tag/v1.0.0)
-
+[Скачать уже готовый пак карт на 01.11.26].(https://drive.google.com/file/d/1s5i7lOw3TxspZM1Hmp-H140zgWzhNy_i/view?usp=drivesdk)
 Android-приложение (Android 11+).
 Само листает карты в игре, делает скриншоты, вырезает карточки и собирает zip в `Загрузки/PUBG_cards`.
 
