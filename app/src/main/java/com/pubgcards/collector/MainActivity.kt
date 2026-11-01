@@ -1,6 +1,9 @@
 package com.pubgcards.collector
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -9,6 +12,13 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.method.LinkMovementMethod
+import android.text.style.ClickableSpan
+import android.text.style.UnderlineSpan
+import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.CheckBox
@@ -25,6 +35,7 @@ class MainActivity : Activity() {
     private lateinit var svcView: TextView
     private lateinit var statusView: TextView
     private val setBoxes = ArrayList<CheckBox>()
+    private val uniqueViews = ArrayList<TextView>()
 
     private val games = listOf(
         "com.tencent.ig", "com.pubg.krmobile", "com.vng.pubgmobile",
@@ -94,6 +105,21 @@ class MainActivity : Activity() {
         title.setTextColor(pink)
         title.textSize = 28f
         root.addView(title)
+        val uc = "52099665966"
+        val credits = SpannableString("Над проектом работал byjoom, dangerping\n(пожертвовать uc $uc)")
+        val ucStart = credits.indexOf(uc)
+        credits.setSpan(object : ClickableSpan() {
+            override fun onClick(widget: View) {
+                copyUc(uc)
+            }
+        }, ucStart, ucStart + uc.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        credits.setSpan(UnderlineSpan(), ucStart, ucStart + uc.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        val creditsView = body("")
+        creditsView.text = credits
+        creditsView.movementMethod = LinkMovementMethod.getInstance()
+        creditsView.setLinkTextColor(pink)
+        creditsView.textSize = 15f
+        btn("Скопировать номер UC", Color.rgb(80, 80, 95)) { copyUc(uc) }
         body("Сбор карточек коллекции PUBG Mobile: сам листает карты, делает скриншоты, вырезает и складывает в zip.")
 
         head("0. Служба")
@@ -109,25 +135,64 @@ class MainActivity : Activity() {
         }
 
         head("1. Актуальные наборы")
-        body("Отметь наборы из главного меню коллекции (слева направо):")
-        val boxRow = LinearLayout(this)
-        boxRow.orientation = LinearLayout.HORIZONTAL
+        body("Отметь наборы из главного меню коллекции (слева направо) и укажи, сколько в каждом УНИКАЛЬНЫХ карт. Уникальные стоят в сетке первыми (особая рамка, при открытии карта слева, справа панель). Приложение снимет их первыми и положит в отдельную папку, остальные карты пойдут следом.")
+        val prefs = getSharedPreferences("ui", MODE_PRIVATE)
         for (i in 1..4) {
+            val row = LinearLayout(this)
+            row.orientation = LinearLayout.HORIZONTAL
+            row.gravity = Gravity.CENTER_VERTICAL
+
             val c = CheckBox(this)
-            c.text = "$i"
+            c.text = "Набор $i"
             c.isChecked = true
             c.setTextColor(Color.WHITE)
+            c.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             setBoxes.add(c)
-            boxRow.addView(c)
+            row.addView(c)
+
+            val lab = TextView(this)
+            lab.text = "уникальных:"
+            lab.setTextColor(Color.rgb(200, 200, 212))
+            row.addView(lab)
+
+            val cnt = TextView(this)
+            cnt.text = prefs.getInt("uniq_$i", 1).toString()
+            cnt.setTextColor(Color.WHITE)
+            cnt.textSize = 18f
+            cnt.gravity = Gravity.CENTER
+            cnt.layoutParams = LinearLayout.LayoutParams(dp(34), ViewGroup.LayoutParams.WRAP_CONTENT)
+            uniqueViews.add(cnt)
+
+            fun stepBtn(label: String, delta: Int): Button {
+                val b = Button(this)
+                b.text = label
+                b.setTextColor(Color.WHITE)
+                b.isAllCaps = false
+                val g = GradientDrawable()
+                g.setColor(Color.rgb(80, 80, 95))
+                g.cornerRadius = dp(10).toFloat()
+                b.background = g
+                b.layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
+                b.setOnClickListener {
+                    val v = ((cnt.text.toString().toIntOrNull() ?: 0) + delta).coerceIn(0, 12)
+                    cnt.text = v.toString()
+                    prefs.edit().putInt("uniq_$i", v).apply()
+                }
+                return b
+            }
+            row.addView(stepBtn("−", -1))
+            row.addView(cnt)
+            row.addView(stepBtn("+", 1))
+            root.addView(row)
         }
-        root.addView(boxRow)
         btn("Настроить точки (розовые блоки)", Color.rgb(80, 80, 95)) { calibrate("current") }
         btn("▶ Собрать актуальные наборы", pink) { run("current") }
 
-        head("2. История (старые наборы)")
-        body("Снимает ВСЕ наборы из «Истории» подряд, список наборов справа листает сам. Это долго: около 1,5 минуты на набор.")
+        head("2. История карт (гость)")
+        body("Для аккаунта-гостя: карты серые и открываются слева, справа панель. Особые карты (с перками) приложение узнаёт само. Снимает ВСЕ наборы из «Истории» подряд: нажимает названия в списке справа, листает список сам и пропускает уже снятые наборы. Это долго: около 1–2 минут на набор.")
         btn("Настроить точки (розовые блоки)", Color.rgb(80, 80, 95)) { calibrate("history") }
-        btn("▶ Собрать всю историю", pink) { run("history") }
+        btn("▶ История карт (гость)", pink) { run("history") }
+        btn("(функция отладки)", Color.rgb(55, 55, 70)) { run("debug") }
 
         head("3. Результат")
         statusView = body("")
@@ -147,7 +212,13 @@ class MainActivity : Activity() {
             R.drawable.hint_4 to "4 · Увеличенная карта. Именно с этого кадра приложение вырезает карточку.",
             R.drawable.hint_5 to "5 · Кнопка «История» (обведена) открывает старые наборы.",
             R.drawable.hint_6 to "6 · История: список наборов справа. Блоки списка ставятся на 2-й и 3-й набор (под выбранным).",
-            R.drawable.hint_7 to "7 · В истории карты вырезаются так же: с увеличенного кадра."
+            R.drawable.hint_7 to "7 · В истории карты вырезаются так же: с увеличенного кадра.",
+            R.drawable.hint_11 to "8 · Набор с уникальной картой: она стоит первой, у неё особая рамка.",
+            R.drawable.hint_8 to "9 · Просмотр уникальной карты: карта слева, справа панель. Лупа внизу справа от карты (блок «слева»).",
+            R.drawable.hint_9 to "10 · Просмотр серой карты (аккаунт-гость): тоже карта слева, справа панель «Как получить».",
+            R.drawable.hint_10 to "11 · История: справа список наборов. Блоки списка ставятся на 2-й и 3-й набор сверху.",
+            R.drawable.hint_12 to "12 · Просмотр полученной карты: карта по центру, лупа справа внизу (блок «по центру»).",
+            R.drawable.hint_13 to "13 · Особая карта с перками: карта слева, справа «Эксклюзивные перки» и «Как получить»."
         )
         for ((res, cap) in hints) {
             body(cap)
@@ -164,7 +235,33 @@ class MainActivity : Activity() {
             )
         }
 
+        val link = TextView(this)
+        link.text = "набор истории карт на 1.11.26. byJoom"
+        link.setTextColor(Color.rgb(120, 170, 255))
+        link.textSize = 15f
+        link.paintFlags = link.paintFlags or android.graphics.Paint.UNDERLINE_TEXT_FLAG
+        link.setPadding(0, dp(28), 0, dp(8))
+        link.setOnClickListener {
+            try {
+                startActivity(
+                    Intent(
+                        Intent.ACTION_VIEW,
+                        Uri.parse("https://drive.google.com/file/d/1p4AVAtClioYakUlzS_shazUOj5J-TdNF/view?usp=drivesdk")
+                    )
+                )
+            } catch (e: Exception) {
+                toast("Не удалось открыть ссылку")
+            }
+        }
+        root.addView(link)
+
         setContentView(sv)
+    }
+
+    private fun copyUc(text: String) {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText("UC", text))
+        toast("Скопировано: $text")
     }
 
     override fun onResume() {
@@ -223,7 +320,9 @@ class MainActivity : Activity() {
             toast("Отметь хотя бы один набор.")
             return
         }
-        s.startRun(mode, sets)
+        val uniq = HashMap<Int, Int>()
+        for ((i, v) in uniqueViews.withIndex()) uniq[i + 1] = v.text.toString().toIntOrNull() ?: 0
+        s.startRun(mode, sets, uniq)
         toast("Открой МЕНЮ коллекции в игре и нажми «Старт» в розовой панели.")
         launchGame()
     }

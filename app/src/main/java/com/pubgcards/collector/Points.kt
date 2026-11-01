@@ -13,12 +13,13 @@ object Points {
         PointDef("set3", "Набор 3", 0.595f, 0.40f),
         PointDef("set4", "Набор 4", 0.795f, 0.40f),
         PointDef("first", "Первая карта", 0.20f, 0.37f),
-        PointDef("zoom", "Лупа", 0.574f, 0.736f),
+        PointDef("zoom", "Лупа (карта по центру)", 0.574f, 0.736f),
+        PointDef("zoomU", "Лупа (карта слева)", 0.375f, 0.759f),
         PointDef("next", "Стрелка ›", 0.954f, 0.497f),
         PointDef("close", "Крестик ✕", 0.957f, 0.043f),
         PointDef("history", "Кнопка «История»", 0.138f, 0.036f),
         PointDef("h1", "Список: 2-й набор", 0.94f, 0.26f),
-        PointDef("h2", "Список: 3-й набор", 0.94f, 0.38f)
+        PointDef("h2", "Список: 3-й набор", 0.94f, 0.377f)
     )
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("points", Context.MODE_PRIVATE)

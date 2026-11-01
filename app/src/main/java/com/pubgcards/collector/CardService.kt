@@ -317,9 +317,9 @@ class CardService : AccessibilityService() {
 
     private fun stepsFor(mode: String): List<Step> {
         val viewer = Step(
-            "Шаг 3/3 · Просмотр карты\nНажми на любую карту и поставь блоки: на лупу, на стрелку › и на крестик ✕ (справа вверху).",
-            listOf("zoom", "next", "close"),
-            listOf(R.drawable.hint_3, R.drawable.hint_4)
+            "Шаг 3/3 · Просмотр карты\nОткрой карту. Если она по центру – блок «по центру» на лупу. Если слева, а справа панель (уникальная или серая карта) – блок «слева» на лупу. Какого вида в игре нет – оставь блок как есть. Ещё: стрелка › и крестик ✕.",
+            listOf("zoom", "zoomU", "next", "close"),
+            listOf(R.drawable.hint_3, R.drawable.hint_12, R.drawable.hint_8, R.drawable.hint_9, R.drawable.hint_13, R.drawable.hint_4)
         )
         return if (mode == "current") {
             listOf(
@@ -329,9 +329,9 @@ class CardService : AccessibilityService() {
                     listOf(R.drawable.hint_1)
                 ),
                 Step(
-                    "Шаг 2/3 · Внутри набора\nОткрой любой набор. Блок – на самую первую карту.",
+                    "Шаг 2/3 · Внутри набора\nОткрой любой набор. Блок – на самую первую карту (уникальные стоят первыми).",
                     listOf("first"),
-                    listOf(R.drawable.hint_2)
+                    listOf(R.drawable.hint_11, R.drawable.hint_2)
                 ),
                 viewer
             )
@@ -343,9 +343,9 @@ class CardService : AccessibilityService() {
                     listOf(R.drawable.hint_5)
                 ),
                 Step(
-                    "Шаг 2/3 · Экран «История»\nОткрой «Историю». Блоки списка – на 2-й и 3-й набор справа (под выбранным). «Первая карта» – на первую карту.",
+                    "Шаг 2/3 · Экран «История»\nОткрой «Историю». Справа список наборов. Блоки списка – на 2-й и 3-й набор сверху (ровно по названиям). «Первая карта» – на первую карту в сетке.",
                     listOf("h1", "h2", "first"),
-                    listOf(R.drawable.hint_6)
+                    listOf(R.drawable.hint_10, R.drawable.hint_6)
                 ),
                 viewer
             )
@@ -529,7 +529,8 @@ class CardService : AccessibilityService() {
     // Панель запуска (Старт / Стоп)
     // =====================================================================
 
-    fun startRun(mode: String, sets: List<Int>) {
+    fun startRun(mode: String, sets: List<Int>, uniqueCounts: Map<Int, Int>) {
+        uniques = uniqueCounts
         main.post {
             stopAll()
             showRunPanel(mode, sets)
@@ -705,6 +706,13 @@ class CardService : AccessibilityService() {
     // Сбор карт
     // =====================================================================
 
+    /** Сколько уникальных карт в каждом наборе (номер набора -> количество). */
+    @Volatile
+    private var uniques: Map<Int, Int> = emptyMap()
+
+    /** Последний сработавший вид просмотра: true = карта слева, панель справа. */
+    private var lastLeft = true
+
     private fun runJob(mode: String, sets: List<Int>) {
         var resultText = ""
         try {
@@ -720,7 +728,12 @@ class CardService : AccessibilityService() {
             getSharedPreferences("state", Context.MODE_PRIVATE)
                 .edit().putString("lastRaw", rawDir.absolutePath).apply()
 
-            if (mode == "current") runCurrent(sets, rawDir) else runHistory(rawDir)
+            lastLeft = true
+            when (mode) {
+                "current" -> runCurrent(sets, rawDir)
+                "debug" -> runHistory(rawDir, DebugProfile.sets)
+                else -> runHistory(rawDir, null)
+            }
 
             setStatus(if (running) "Снимки готовы. Нарезаю…" else "Остановлено. Нарезаю снятое…")
             val res = CardCrop.process(this, rawDir) { setStatus(it) }
@@ -735,23 +748,38 @@ class CardService : AccessibilityService() {
         finishRun(resultText)
     }
 
+    /** Снимает экран и говорит, что на нём (null, если снимок не удался). */
+    private fun lookScreen(): CardCrop.Screen? {
+        val b = shot() ?: return null
+        val s = CardCrop.classify(b)
+        b.recycle()
+        return s
+    }
+
     private fun runCurrent(sets: List<Int>, rawDir: File) {
         for (n in sets) {
             if (!running) return
+            val k = uniques[n] ?: 0
             setStatus("Набор $n: открываю…")
             tapPt("set$n")
             pause(2000)
-            captureSet("current_set$n", rawDir, emptyList(), "Набор $n")
+            captureSet("current_set$n", rawDir, k, "Набор $n")
             if (!running) return
             tapPt("close") // из набора обратно в меню
             pause(1600)
         }
     }
 
-    private fun runHistory(rawDir: File) {
+    /**
+     * История: справа список наборов. Для каждого набора: нажимаем название, смотрим,
+     * не снимали ли уже такую сетку (по отпечатку), снимаем все карты стрелкой ›.
+     * Потом список листается свайпом вверх, пока новых наборов не останется.
+     * На аккаунте-госте все карты серые: просмотр «карта слева, панель справа».
+     */
+    private fun runHistory(rawDir: File, profile: List<DebugProfile.Entry>?) {
         setStatus("Открываю «История»…")
         tapPt("history")
-        pause(2200)
+        pause(2400)
         val p1 = Points.get(this, "h1")
         val p2 = Points.get(this, "h2")
         val step = p2.y - p1.y
@@ -759,129 +787,187 @@ class CardService : AccessibilityService() {
             setStatus("Проверь точки списка истории: расстояние между блоками слишком маленькое.")
             return
         }
-        // Слоты списка: один выше первой точки + дальше с шагом до низа экрана
+        // Слоты списка: на один выше первой точки и дальше с шагом до низа экрана
         val slots = ArrayList<Float>()
         var y = p1.y - step
-        while (y <= 0.96f) {
-            if (y > 0.05f) slots.add(y)
+        while (y <= 0.93f) {
+            if (y > 0.06f) slots.add(y)
             y += step
         }
         val known = ArrayList<FloatArray>()
-        var idx = 0
-        for (page in 0 until 40) {
+        var sets = 0
+        var cards = 0
+        var emptyPages = 0
+        val problems = ArrayList<String>()
+        for (page in 0 until 60) {
             if (!running) return
             var fresh = 0
             for (sy in slots) {
                 if (!running) return
                 tapAbs(p1.x, sy)
-                pause(1600)
-                val tag = "history_" + "%02d".format(idx + 1)
-                val first = captureSet(tag, rawDir, known, "История: набор ${idx + 1}")
-                if (first != null) {
-                    known.add(first)
-                    idx++
-                    fresh++
+                pause(1400)
+                var g = shot() ?: continue
+                var gs = CardCrop.gridSig(g)
+                g.recycle()
+                if (known.any { CardCrop.sameGrid(it, gs) }) {
+                    // возможно, сетка ещё не сменилась: подождём и проверим ещё раз
+                    pause(900)
+                    g = shot() ?: continue
+                    gs = CardCrop.gridSig(g)
+                    g.recycle()
+                    if (known.any { CardCrop.sameGrid(it, gs) }) continue
                 }
+                known.add(gs)
+                sets++
+                val entry = profile?.getOrNull(sets - 1)
+                // гость: всё серое, просмотр «карта слева»; отладка: по данным аккаунта
+                lastLeft = entry == null || entry.owned == 0
+                val tag = "history_" + "%02d".format(sets) +
+                    (if (entry != null) "_" + entry.name.replace(Regex("[^\\p{L}\\p{N}]+"), "_") else "")
+                val label = "История: набор $sets" + (if (entry != null) " (${entry.name})" else "")
+                val got = captureSet(tag, rawDir, 0, label)
+                cards += got
+                if (entry != null && got < entry.total) {
+                    problems.add("набор $sets (${entry.name}): снято $got из ${entry.total}")
+                }
+                fresh++
+                setStatus("История: наборов $sets, карт $cards")
             }
-            if (fresh == 0) break
-            val yStart = minOf(p1.y + step * 5f, 0.92f)
-            swipeV(p1.x, yStart, yStart - step * 4f, 1400)
+            if (fresh == 0) {
+                emptyPages++
+                if (emptyPages >= 2) break
+            } else {
+                emptyPages = 0
+            }
+            val yStart = (p1.y + step * 4f).coerceAtMost(0.90f)
+            swipeV(p1.x, yStart, yStart - step * 3f, 1600)
             pause(1800)
         }
-    }
-
-    /** Убедиться, что открыт обычный просмотр карты (со стрелками). */
-    private fun ensureViewer(): Boolean {
-        for (i in 0 until 3) {
-            val b = shot() ?: return false
-            val s = CardCrop.classify(b)
-            b.recycle()
-            if (s == CardCrop.Screen.VIEWER) return true
-            if (s == CardCrop.Screen.ZOOMED) {
-                tapPt("close")
-                pause(900)
-            } else {
-                return false
-            }
+        var summary = "История: наборов $sets, карт $cards"
+        if (profile != null) {
+            if (sets < profile.size) problems.add("найдено наборов $sets из ${profile.size}")
+            if (problems.isNotEmpty()) summary += ". Проверь: " + problems.joinToString("; ")
         }
-        return false
+        setStatus(summary)
     }
 
-    /** Закрыть просмотр/увеличение, остаться на сетке карт набора. */
-    private fun closeToGrid() {
-        for (i in 0 until 4) {
-            val b = shot() ?: return
-            val s = CardCrop.classify(b)
+    /** Нажимает лупу и возвращает кадр с увеличенной картой (или null). */
+    private fun zoomCard(): Bitmap? {
+        val first = if (lastLeft) "zoomU" else "zoom"
+        val second = if (lastLeft) "zoom" else "zoomU"
+        val attempts = listOf(first, second, first)
+        for ((i, key) in attempts.withIndex()) {
+            if (!running) return null
+            tapPt(key)
+            pause(if (i == 2) 1900L else 1200L)
+            var b = shot() ?: return null
+            var s = CardCrop.classify(b)
+            if (s == CardCrop.Screen.UNKNOWN) {
+                b.recycle()
+                pause(900)
+                b = shot() ?: return null
+                s = CardCrop.classify(b)
+            }
+            if (s == CardCrop.Screen.ZOOMED) {
+                lastLeft = key == "zoomU"
+                return b
+            }
             b.recycle()
-            if (s == CardCrop.Screen.OTHER) return
-            tapPt("close")
-            Thread.sleep(900)
+        }
+        return null
+    }
+
+    /** Закрыть увеличение и просмотр, остаться на сетке карт набора. */
+    private fun closeToGrid() {
+        var unknown = 0
+        for (i in 0 until 8) {
+            val s = lookScreen() ?: return
+            when (s) {
+                CardCrop.Screen.OTHER -> return
+                CardCrop.Screen.UNKNOWN -> {
+                    unknown++
+                    if (unknown > 3) return
+                    Thread.sleep(700)
+                }
+                else -> {
+                    tapPt("close")
+                    Thread.sleep(950)
+                }
+            }
         }
     }
 
     /**
-     * Открыта сетка набора. Открывает первую карту, увеличивает лупой и снимает кадр,
-     * потом листает стрелкой ›, пока карты не начнут повторяться.
-     * Возвращает отпечаток первой карты (или null, если набор уже был снят/пуст).
+     * Открыта сетка набора. Открывает первую карту и листает стрелкой ›, на каждой карте
+     * нажимает лупу и снимает увеличенный кадр. Первые [uniqueCount] карт – уникальные
+     * (просмотр «карта слева, панель справа»), они идут первыми и кладутся в отдельную папку.
+     * Останавливается, когда карты начинают повторяться. Возвращает число снятых карт.
      */
-    private fun captureSet(
-        tag: String,
-        rawDir: File,
-        known: List<FloatArray>,
-        label: String
-    ): FloatArray? {
+    private fun captureSet(tag: String, rawDir: File, uniqueCount: Int, label: String): Int {
         tapPt("first")
-        pause(1300)
+        pause(1500)
         val seen = ArrayList<FloatArray>()
-        var misses = 0
-        while (running && seen.size < MAX_CARDS) {
-            var bmp = shot() ?: break
-            var scr = CardCrop.classify(bmp)
-            if (scr == CardCrop.Screen.OTHER) {
-                bmp.recycle()
-                misses++
-                if (misses > 2) break
+        var skipped = 0
+        var retried = false
+        var index = 0
+        while (running && index < MAX_CARDS) {
+            val isUnique = index < uniqueCount
+
+            // 1. убеждаемся, что открыт просмотр карты
+            var scr = lookScreen() ?: break
+            var wait = 0
+            while (scr == CardCrop.Screen.UNKNOWN && wait < 3) {
+                pause(800)
+                scr = lookScreen() ?: break
+                wait++
+            }
+            if (scr == CardCrop.Screen.ZOOMED) {
+                tapPt("close")
                 pause(900)
-                continue
+                scr = lookScreen() ?: break
             }
-            if (scr == CardCrop.Screen.VIEWER) {
-                bmp.recycle()
-                tapPt("zoom")
-                pause(1100)
-                bmp = shot() ?: break
-                scr = CardCrop.classify(bmp)
-                if (scr == CardCrop.Screen.VIEWER) {
-                    // лупа не сработала — пробуем ещё раз
-                    bmp.recycle()
-                    tapPt("zoom")
-                    pause(1300)
-                    bmp = shot() ?: break
+            if (scr != CardCrop.Screen.VIEWER) break
+
+            // 2. лупа и снимок увеличенной карты
+            val zoomed = zoomCard()
+            if (zoomed == null) {
+                skipped++
+                setStatus("$label: карта ${index + 1} не увеличилась, пропускаю")
+                if (skipped > 4) break
+            } else {
+                val card = CardCrop.cropCard(zoomed)
+                val sg = CardCrop.signature(card)
+                if (card !== zoomed) card.recycle()
+                if (seen.any { CardCrop.same(it, sg) }) {
+                    zoomed.recycle()
+                    if (!retried) {
+                        // возможно, стрелка › не сработала: нажмём ещё раз и проверим
+                        retried = true
+                        tapPt("close")
+                        pause(900)
+                        tapPt("next")
+                        pause(1500)
+                        continue
+                    }
+                    break // начались повторы: набор закончился
                 }
+                retried = false
+                seen.add(sg)
+                val num = if (isUnique) index + 1 else index - uniqueCount + 1
+                val name = tag + (if (isUnique) "_unique" else "") + "_" + "%02d".format(num) + ".png"
+                saveRaw(zoomed, File(rawDir, name))
+                zoomed.recycle()
+                setStatus("$label: карта ${index + 1}" + if (isUnique) " (уникальная)" else "")
+                tapPt("close") // закрыть увеличение
+                pause(900)
             }
-            val card = CardCrop.cropCard(bmp)
-            val sg = CardCrop.signature(card)
-            if (card !== bmp) card.recycle()
 
-            if (seen.isEmpty() && known.any { CardCrop.same(it, sg) }) {
-                bmp.recycle()
-                closeToGrid()
-                return null
-            }
-            if (seen.any { CardCrop.same(it, sg) }) {
-                bmp.recycle()
-                break
-            }
-            seen.add(sg)
-            saveRaw(bmp, File(rawDir, tag + "_" + "%02d".format(seen.size) + ".png"))
-            bmp.recycle()
-            setStatus("$label: карта ${seen.size}")
-
-            if (!ensureViewer()) break
+            // 3. следующая карта
             tapPt("next")
             pause(1000)
-            misses = 0
+            index++
         }
         closeToGrid()
-        return seen.firstOrNull()
+        return seen.size
     }
 }
