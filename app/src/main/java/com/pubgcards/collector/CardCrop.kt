@@ -164,7 +164,106 @@ object CardCrop {
         val t = box.t.coerceIn(0, bmp.height - 1)
         val w = box.w.coerceAtMost(bmp.width - l).coerceAtLeast(1)
         val h = box.h.coerceAtMost(bmp.height - t).coerceAtLeast(1)
-        return Bitmap.createBitmap(bmp, l, t, w, h)
+        val crop = Bitmap.createBitmap(bmp, l, t, w, h)
+        val clean = makeTransparent(crop)
+        if (clean !== crop && crop !== bmp) crop.recycle()
+        return clean
+    }
+
+    /**
+     * Убирает тёмный фон игры вокруг рамки (углы, выемки, края) и делает его прозрачным.
+     * Заливка идёт только от краёв картинки по тёмным нейтрально-серым пикселям и не глубже
+     * ~11% ширины, поэтому тёмные места самой картинки внутри рамки не страдают.
+     */
+    fun makeTransparent(src: Bitmap): Bitmap {
+        val w = src.width
+        val h = src.height
+        if (w < 8 || h < 8) return src
+        val px = IntArray(w * h)
+        src.getPixels(px, 0, w, 0, 0, w, h)
+
+        val thr = 80
+        val depth = (w * 0.11f).toInt().coerceAtLeast(4)
+        val lumArr = IntArray(w * h)
+        val cand = BooleanArray(w * h)
+        for (y in 0 until h) {
+            val dy = minOf(y, h - 1 - y)
+            for (x in 0 until w) {
+                val i = y * w + x
+                val c = px[i]
+                val l = lum(c)
+                lumArr[i] = l
+                val r = (c shr 16) and 255
+                val g = (c shr 8) and 255
+                val b = c and 255
+                val sat = maxOf(r, g, b) - minOf(r, g, b)
+                val near = minOf(minOf(x, w - 1 - x), dy) < depth
+                cand[i] = near && l < thr && sat < 28
+            }
+        }
+
+        // заливка фона от границ картинки
+        val bg = BooleanArray(w * h)
+        val stack = IntArray(w * h)
+        var sp = 0
+        fun push(i: Int) {
+            if (cand[i] && !bg[i]) {
+                bg[i] = true
+                stack[sp++] = i
+            }
+        }
+        for (x in 0 until w) {
+            push(x)
+            push((h - 1) * w + x)
+        }
+        for (y in 0 until h) {
+            push(y * w)
+            push(y * w + w - 1)
+        }
+        while (sp > 0) {
+            val i = stack[--sp]
+            val x = i % w
+            val y = i / w
+            if (x > 0) push(i - 1)
+            if (x < w - 1) push(i + 1)
+            if (y > 0) push(i - w)
+            if (y < h - 1) push(i + w)
+        }
+
+        // сглаживание края: пиксели рядом с фоном плавно становятся прозрачными
+        val out = IntArray(w * h)
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                val i = y * w + x
+                if (bg[i]) {
+                    out[i] = 0
+                    continue
+                }
+                var nearBg = false
+                var yy = maxOf(0, y - 2)
+                while (yy <= minOf(h - 1, y + 2) && !nearBg) {
+                    var xx = maxOf(0, x - 2)
+                    while (xx <= minOf(w - 1, x + 2)) {
+                        if (bg[yy * w + xx]) {
+                            nearBg = true
+                            break
+                        }
+                        xx++
+                    }
+                    yy++
+                }
+                val c = px[i]
+                if (nearBg) {
+                    val a = ((lumArr[i] - thr + 30) * 255 / 45).coerceIn(0, 255)
+                    out[i] = (a shl 24) or (c and 0xFFFFFF)
+                } else {
+                    out[i] = c or (0xFF shl 24)
+                }
+            }
+        }
+        val res = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        res.setPixels(out, 0, w, 0, 0, w, h)
+        return res
     }
 
     /** Маленький «отпечаток» карточки, чтобы узнавать повторы. */
